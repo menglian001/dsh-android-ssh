@@ -16,6 +16,7 @@ import java.util.List;
 import java.util.Map;
 import java.util.concurrent.ExecutorService;
 import java.util.concurrent.Executors;
+import java.util.concurrent.atomic.AtomicBoolean;
 import java.util.concurrent.atomic.AtomicReference;
 
 /**
@@ -27,12 +28,16 @@ import java.util.concurrent.atomic.AtomicReference;
  * the process running with the screen off; the user stops it from the
  * notification, which tears dsh down cleanly.
  *
+ * All progress and output goes through {@link BootState}, the process-wide
+ * holder the UI reads directly. Broadcasts alone lost events whenever the
+ * Activity started late or returned from the background.
+ *
  * Everything the process touches — rootfs, dsh data, SSH trust store — lives
  * under this app's private storage, so uninstalling removes it all.
  */
 public final class DshService extends Service {
 
-    /** Broadcast when the loopback server answers. */
+    /** Broadcast when the loopback server answers, for any external observer. */
     public static final String ACTION_READY = "app.dsh.shell.READY";
     /** Broadcast when the server is down or failed to boot. */
     public static final String ACTION_DOWN = "app.dsh.shell.DOWN";
@@ -40,6 +45,8 @@ public final class DshService extends Service {
     public static final String ACTION_PROGRESS = "app.dsh.shell.PROGRESS";
     /** Broadcast carrying one line of captured process output. */
     public static final String ACTION_LOG = "app.dsh.shell.LOG";
+    /** Broadcast asking the service to tear down and start over. */
+    public static final String ACTION_RESTART = "app.dsh.shell.RESTART";
 
     /** Extra: the progress or log line. */
     public static final String EXTRA_TEXT = "text";
@@ -55,7 +62,7 @@ public final class DshService extends Service {
      * "failed" is worse than a longer wait. The UI shows elapsed time either
      * way, so the user can tell waiting from hung.
      */
-    private static final long SERVER_WAIT_MS = 90_000;
+    private static final long SERVER_WAIT_MS = 120_000;
 
     /** Single-threaded boot lane: extraction then process start, in order. */
     private final ExecutorService boot = Executors.newSingleThreadExecutor();
@@ -63,9 +70,8 @@ public final class DshService extends Service {
     /** The live dsh process, if any. */
     private final AtomicReference<Process> dsh = new AtomicReference<>();
 
-    /** Tail of the captured process output, for the failure message. */
-    private final java.util.Deque<String> recentOutput =
-            new java.util.concurrent.ConcurrentLinkedDeque<>();
+    /** Guards against two concurrent boot attempts for one service lifetime. */
+    private final AtomicBoolean booting = new AtomicBoolean(false);
 
     @Override
     public void onCreate() {
@@ -76,13 +82,23 @@ public final class DshService extends Service {
                 NotificationManager.IMPORTANCE_LOW);
         channel.setDescription(getString(R.string.notification_channel_desc));
         getSystemService(NotificationManager.class).createNotificationChannel(channel);
+        BootState.get().attachLogFile(
+                new File(getFilesDir(), "dsh-runtime/dsh.log"));
     }
 
     @Override
     public int onStartCommand(Intent intent, int flags, int startId) {
+        if (intent != null && ACTION_RESTART.equals(intent.getAction())) {
+            restartBoot();
+            return START_STICKY;
+        }
         Notification notification = buildNotification(getString(R.string.notification_starting));
         startForeground(NOTIFICATION_ID, notification);
-        boot.submit(this::bootRuntime);
+        // A repeated start (the Activity is recreated, or the system redelivers
+        // START_STICKY) must not spawn a second dsh process.
+        if (booting.compareAndSet(false, true)) {
+            boot.submit(this::bootRuntime);
+        }
         return START_STICKY;
     }
 
@@ -98,13 +114,30 @@ public final class DshService extends Service {
         return null;
     }
 
+    /** Tear the current attempt down and start a clean one. */
+    private void restartBoot() {
+        BootState.get().reset();
+        stopDsh();
+        booting.set(false);
+        boot.submit(() -> {
+            if (booting.compareAndSet(false, true)) {
+                bootRuntime();
+            }
+        });
+    }
+
     /** Extract the runtime on first run, start dsh, then announce readiness. */
     private void bootRuntime() {
+        BootState state = BootState.get();
         try {
             long bootStarted = System.currentTimeMillis();
-            progress(getString(R.string.progress_prepare));
+            state.phase(BootState.Phase.EXTRACTING, getString(R.string.progress_prepare));
+            state.log("boot: preparing runtime");
             File root = RuntimeInstaller.ensureRuntime(this, this::extractProgress);
-            progress(getString(R.string.progress_starting));
+            state.log("boot: runtime ready at " + root);
+
+            state.phase(BootState.Phase.STARTING, getString(R.string.progress_starting));
+            state.log("boot: launching dsh");
             Process process = launchDsh(root);
             dsh.set(process);
 
@@ -114,28 +147,32 @@ public final class DshService extends Service {
             pump.setDaemon(true);
             pump.start();
 
-            // Watch the process; if it exits, tell the UI with its last words.
+            // Watch the process; if it exits, report it with its last words.
             new Thread(() -> {
                 try {
                     int code = process.waitFor();
-                    Log.w(TAG, "dsh exited with " + code);
-                    sendBroadcast(new Intent(ACTION_DOWN)
-                            .putExtra(EXTRA_TEXT, failureDetail(code)));
+                    state.log("dsh exited with code " + code);
+                    if (state.phase() != BootState.Phase.READY) {
+                        state.fail(failureDetail(code));
+                    }
                 } catch (InterruptedException ignored) {
                     // Service shutdown; the process was destroyed alongside.
                 }
             }, "dsh-watch").start();
 
-            // Poll loopback until the server answers, then announce readiness.
+            state.phase(BootState.Phase.WAITING, getString(R.string.progress_waiting, 0));
             if (awaitServer()) {
                 long seconds = (System.currentTimeMillis() - bootStarted) / 1000;
-                log("ready in " + seconds + "s");
+                state.log("boot: ready in " + seconds + "s");
+                state.phase(BootState.Phase.READY, "");
                 updateNotification(getString(R.string.notification_running));
                 sendBroadcast(new Intent(ACTION_READY));
             } else {
                 String detail = process.isAlive()
                         ? getString(R.string.failure_timeout, SERVER_WAIT_MS / 1000)
                         : failureDetail(exitCodeOf(process));
+                state.log("boot: failed");
+                state.fail(detail);
                 updateNotification(getString(R.string.notification_failed));
                 sendBroadcast(new Intent(ACTION_DOWN).putExtra(EXTRA_TEXT, detail));
             }
@@ -143,9 +180,12 @@ public final class DshService extends Service {
             Log.e(TAG, "runtime boot failed", error);
             String detail = error.getClass().getSimpleName()
                     + (error.getMessage() == null ? "" : ": " + error.getMessage());
-            log("boot failed: " + detail);
+            state.log("boot: failed with " + detail);
+            state.fail(detail);
             updateNotification(getString(R.string.notification_failed));
             sendBroadcast(new Intent(ACTION_DOWN).putExtra(EXTRA_TEXT, detail));
+        } finally {
+            booting.set(false);
         }
     }
 
@@ -153,29 +193,28 @@ public final class DshService extends Service {
     private void extractProgress(long consumed, long total, long entries) {
         // The entry count is the honest, monotonic signal: gzip reads ahead,
         // so byte percentages lag badly and would sit at 0% for a long time.
-        // Show bytes only as a coarse percentage once it says something.
+        BootState state = BootState.get();
         if (total > 0) {
             int percent = (int) Math.min(100, consumed * 100 / total);
             if (percent >= 5) {
-                progress(getString(R.string.progress_extract_percent, percent, entries));
+                state.phase(BootState.Phase.EXTRACTING,
+                        getString(R.string.progress_extract_percent, percent, entries));
                 return;
             }
         }
-        progress(getString(R.string.progress_extract, entries));
+        state.phase(BootState.Phase.EXTRACTING,
+                getString(R.string.progress_extract, entries));
     }
 
-    /** Copy the process output to the log tail and to the UI, line by line. */
+    /** Copy the process output into the shared state, line by line. */
     private void pumpOutput(Process process) {
+        BootState state = BootState.get();
         try (java.io.BufferedReader reader = new java.io.BufferedReader(
                 new java.io.InputStreamReader(process.getInputStream(),
                         java.nio.charset.StandardCharsets.UTF_8))) {
             String line;
             while ((line = reader.readLine()) != null) {
-                recentOutput.addLast(line);
-                while (recentOutput.size() > 40) {
-                    recentOutput.pollFirst();
-                }
-                log(line);
+                state.log(line);
             }
         } catch (IOException ignored) {
             // The process ended and the stream closed; nothing to drain.
@@ -194,21 +233,10 @@ public final class DshService extends Service {
     /** A short, honest failure line: exit status plus the last output. */
     private String failureDetail(int exitCode) {
         StringBuilder text = new StringBuilder(getString(R.string.failure_exit, exitCode));
-        for (String line : recentOutput) {
+        for (String line : BootState.get().lines()) {
             text.append('\n').append(line);
         }
         return text.toString();
-    }
-
-    /** Broadcast one progress line. */
-    private void progress(String text) {
-        sendBroadcast(new Intent(ACTION_PROGRESS).putExtra(EXTRA_TEXT, text));
-    }
-
-    /** Record and broadcast one log line. */
-    private void log(String text) {
-        Log.i(TAG, text);
-        sendBroadcast(new Intent(ACTION_LOG).putExtra(EXTRA_TEXT, text));
     }
 
     /** Start the dsh Web process inside the proot rootfs. */
@@ -252,6 +280,7 @@ public final class DshService extends Service {
         argv.add("--patch");
         argv.add("/opt/dsh/ssh-only.yml");
 
+        BootState.get().log("exec: " + String.join(" ", argv));
         ProcessBuilder builder = new ProcessBuilder(argv).redirectErrorStream(true);
         Map<String, String> env = builder.environment();
         // proot's own bootstrap: the loader binary and its private temp dir.
@@ -274,20 +303,22 @@ public final class DshService extends Service {
 
     /** Poll loopback until the server answers or the wait budget runs out. */
     private boolean awaitServer() {
-        long deadline = System.currentTimeMillis() + SERVER_WAIT_MS;
+        BootState state = BootState.get();
+        long started = System.currentTimeMillis();
+        long deadline = started + SERVER_WAIT_MS;
         long nextTick = 0;
         while (System.currentTimeMillis() < deadline) {
             Process process = dsh.get();
             if (process != null && !process.isAlive()) {
                 return false;
             }
-            // One visible tick every 5 seconds, so the user can tell waiting
-            // from hung even when nothing else is printed.
+            // One visible tick every 2 seconds, so the user can tell waiting
+            // from hung even when dsh prints nothing.
             long now = System.currentTimeMillis();
             if (now >= nextTick) {
-                progress(getString(R.string.progress_waiting,
-                        (now - (deadline - SERVER_WAIT_MS)) / 1000));
-                nextTick = now + 5_000;
+                state.phase(BootState.Phase.WAITING,
+                        getString(R.string.progress_waiting, (now - started) / 1000));
+                nextTick = now + 2_000;
             }
             try {
                 Thread.sleep(200);

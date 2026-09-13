@@ -12,8 +12,8 @@ android {
         // minSdk 26 covers Android 8+ if the key ever moves phones.
         minSdk 26
         targetSdk 34
-        versionCode 3
-        versionName "0.2.0"
+        versionCode 4
+        versionName "0.3.0"
         // Personal single-ABI build: arm64-v8a only, by decision.
         ndk {
             abiFilters 'arm64-v8a'
