@@ -148,7 +148,8 @@ public final class DshService extends Service {
 
             state.phase(BootState.Phase.STARTING, getString(R.string.progress_starting));
             state.log("boot: launching dsh");
-            Process process = launchDsh(root);
+            File libDir = prepareProotLibs(root);
+            Process process = launchDsh(root, libDir);
             dsh.set(process);
 
             // Drain the process output. This is not just for the log: a full
@@ -274,8 +275,62 @@ public final class DshService extends Service {
         return text.toString();
     }
 
+    /**
+     * Stage proot's shared-library dependencies under their real SONAMEs.
+     *
+     * libproot.so declares NEEDED `libtalloc.so.2`, but Android's package
+     * manager only installs jniLibs entries whose name is exactly `lib*.so` —
+     * a versioned file like `libtalloc.so.2` is rejected. The library is
+     * therefore shipped as `libtalloc.so` and copied here to the name the
+     * linker actually looks for. Without this, exec fails with
+     * `CANNOT LINK EXECUTABLE ... library "libtalloc.so.2" not found`.
+     *
+     * @param runtimeRoot - extracted runtime root.
+     * @return the directory holding the correctly named libraries.
+     */
+    private File prepareProotLibs(File runtimeRoot) throws IOException {
+        File nativeDir = new File(getApplicationInfo().nativeLibraryDir);
+        File libDir = new File(runtimeRoot, "proot-libs");
+        //noinspection ResultOfMethodCallIgnored
+        libDir.mkdirs();
+
+        // Name in jniLibs -> SONAME the loader asks for.
+        String[][] libs = {
+                {"libtalloc.so", "libtalloc.so.2"},
+                {"libandroid-shmem.so", "libandroid-shmem.so"},
+                {"libprootloader.so", "libprootloader.so"},
+        };
+        for (String[] pair : libs) {
+            File source = new File(nativeDir, pair[0]);
+            File target = new File(libDir, pair[1]);
+            if (!source.isFile()) {
+                throw new IOException("missing native library " + pair[0]
+                        + " (the APK may be corrupt)");
+            }
+            copyFile(source, target);
+            //noinspection ResultOfMethodCallIgnored
+            target.setReadable(true, true);
+            //noinspection ResultOfMethodCallIgnored
+            target.setExecutable(true, false);
+        }
+        BootState.get().log("proot libs staged in " + libDir);
+        return libDir;
+    }
+
+    /** Copy one file, replacing any previous copy. */
+    private static void copyFile(File source, File target) throws IOException {
+        try (java.io.InputStream in = new java.io.FileInputStream(source);
+             java.io.OutputStream out = new java.io.FileOutputStream(target)) {
+            byte[] buffer = new byte[1 << 16];
+            int read;
+            while ((read = in.read(buffer)) > 0) {
+                out.write(buffer, 0, read);
+            }
+        }
+    }
+
     /** Start the dsh Web process inside the proot rootfs. */
-    private Process launchDsh(File runtimeRoot) throws IOException {
+    private Process launchDsh(File runtimeRoot, File libDir) throws IOException {
         File nativeDir = new File(getApplicationInfo().nativeLibraryDir);
         File proot = new File(nativeDir, "libproot.so");
         File rootfs = new File(runtimeRoot, "rootfs");
@@ -328,7 +383,11 @@ public final class DshService extends Service {
         env.put("PROOT_TMP_DIR", tmp.getAbsolutePath());
         // libtalloc and libandroid-shmem sit beside libproot.so; both are
         // linked by the launcher and the loader.
-        env.put("LD_LIBRARY_PATH", nativeDir.getAbsolutePath());
+        // Point the linker at the staged copies first: that directory holds
+        // libtalloc.so.2, the SONAME libproot.so actually needs. nativeDir is
+        // kept as a fallback for anything addressed by its plain name.
+        env.put("LD_LIBRARY_PATH",
+                libDir.getAbsolutePath() + ":" + nativeDir.getAbsolutePath());
         // Guest-side environment.
         env.put("HOME", "/root");
         env.put("PATH", "/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin");
