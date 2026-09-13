@@ -12,8 +12,8 @@ android {
         // minSdk 26 covers Android 8+ if the key ever moves phones.
         minSdk 26
         targetSdk 34
-        versionCode 4
-        versionName "0.3.0"
+        versionCode 5
+        versionName "0.4.0"
         // Personal single-ABI build: arm64-v8a only, by decision.
         ndk {
             abiFilters 'arm64-v8a'
@@ -49,6 +49,21 @@ android {
     // extension plus noCompress keeps the bundle verbatim.
     androidResources {
         noCompress 'bin'
+    }
+
+    /**
+     * Extract the packaged .so files onto disk at install time.
+     *
+     * proot is EXECUTED as a child process, not dlopen'd as a library. With
+     * the modern default (extractNativeLibs=false) the .so lives only inside
+     * the APK, so executing nativeLibraryDir/libproot.so fails with
+     * "error=2, No such file or directory". Legacy packaging forces the
+     * package manager to write real, executable files into nativeLibraryDir.
+     */
+    packagingOptions {
+        jniLibs {
+            useLegacyPackaging = true
+        }
     }
 }
 
