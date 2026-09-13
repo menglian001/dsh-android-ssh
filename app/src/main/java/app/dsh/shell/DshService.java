@@ -413,6 +413,12 @@ public final class DshService extends Service {
         env.put("HOME", "/root");
         env.put("PATH", "/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin");
         env.put("TMPDIR", "/tmp");
+        // Node and the tools it spawns read the locale; without one, byte
+        // handling and child processes can misbehave. The rootfs ships the
+        // C.UTF-8 tables, and this is the value the working setup used.
+        env.put("LANG", "C.UTF-8");
+        env.put("LC_ALL", "C.UTF-8");
+        env.put("DEBIAN_FRONTEND", "noninteractive");
         // dsh locates its profiles under $DSH_HOME, not a --data flag.
         env.put("DSH_HOME", "/data");
         // Model API egress stays direct from the phone (user's own key);
