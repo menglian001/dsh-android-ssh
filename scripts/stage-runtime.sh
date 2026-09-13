@@ -149,20 +149,34 @@ DSH_HOME="$ROOTFS/data" node \
 #    extracts it with exec permission into nativeLibraryDir.
 log "extracting proot for Android"
 mkdir -p "$ROOT_DIR/app/src/main/jniLibs/arm64-v8a"
-rm -rf "$STAGE/proot-deb" "$STAGE/talloc-deb" "$STAGE/shmem-deb"
-mkdir -p "$STAGE/proot-deb" "$STAGE/talloc-deb" "$STAGE/shmem-deb"
-dpkg -x "$STAGE/downloads/proot.deb" "$STAGE/proot-deb"
-dpkg -x "$STAGE/downloads/libtalloc.deb" "$STAGE/talloc-deb"
-dpkg -x "$STAGE/downloads/libandroid-shmem.deb" "$STAGE/shmem-deb"
-find "$STAGE/proot-deb" -name 'proot' -exec cp {} "$ROOT_DIR/app/src/main/jniLibs/arm64-v8a/libproot.so" \;
-# Termux proot is a thin launcher: PROOT_LOADER names the real loader it execs,
-# so the loader binaries ride beside it under .so names.
-find "$STAGE/proot-deb" -path '*/libexec/proot/loader' -exec cp {} "$ROOT_DIR/app/src/main/jniLibs/arm64-v8a/libprootloader.so" \;
-find "$STAGE/proot-deb" -path '*/libexec/proot/loader32' -exec cp {} "$ROOT_DIR/app/src/main/jniLibs/arm64-v8a/libprootloader32.so" \;
-# Copy real versioned files, then give Android's native loader ordinary .so
-# names; package-manager extraction preserves executable permissions.
-find "$STAGE/talloc-deb" -type f -name 'libtalloc.so*' -exec cp {} "$ROOT_DIR/app/src/main/jniLibs/arm64-v8a/libtalloc.so" \;
-find "$STAGE/shmem-deb" -type f -name 'libandroid-shmem.so*' -exec cp {} "$ROOT_DIR/app/src/main/jniLibs/arm64-v8a/libandroid-shmem.so" \;
+
+# Prefer the vendored proot set. The Termux package currently ships a loader
+# stripped of its .rodata segment (18 KB, two LOAD segments), and proot uses
+# that loader to exec every binary inside the container: with the truncated
+# one the traced child dies with SIGKILL ("proot info: vpid 1: terminated
+# with signal 9"). The vendored copy is the set that was verified working on
+# a real device, so it is the default and the Termux download is the fallback.
+VENDOR="$ROOT_DIR/vendor/proot-arm64"
+if [[ -x "$VENDOR/proot" && -s "$VENDOR/loader" ]]; then
+  log "using vendored proot (verified on device)"
+  cp "$VENDOR/proot" "$ROOT_DIR/app/src/main/jniLibs/arm64-v8a/libproot.so"
+  cp "$VENDOR/loader" "$ROOT_DIR/app/src/main/jniLibs/arm64-v8a/libprootloader.so"
+  cp "$VENDOR/loader32" "$ROOT_DIR/app/src/main/jniLibs/arm64-v8a/libprootloader32.so"
+  cp "$VENDOR/libtalloc.so" "$ROOT_DIR/app/src/main/jniLibs/arm64-v8a/libtalloc.so"
+  cp "$VENDOR/libandroid-shmem.so" "$ROOT_DIR/app/src/main/jniLibs/arm64-v8a/libandroid-shmem.so"
+else
+  log "vendored proot missing; falling back to the Termux packages"
+  rm -rf "$STAGE/proot-deb" "$STAGE/talloc-deb" "$STAGE/shmem-deb"
+  mkdir -p "$STAGE/proot-deb" "$STAGE/talloc-deb" "$STAGE/shmem-deb"
+  dpkg -x "$STAGE/downloads/proot.deb" "$STAGE/proot-deb"
+  dpkg -x "$STAGE/downloads/libtalloc.deb" "$STAGE/talloc-deb"
+  dpkg -x "$STAGE/downloads/libandroid-shmem.deb" "$STAGE/shmem-deb"
+  find "$STAGE/proot-deb" -name 'proot' -exec cp {} "$ROOT_DIR/app/src/main/jniLibs/arm64-v8a/libproot.so" \;
+  find "$STAGE/proot-deb" -path '*/libexec/proot/loader' -exec cp {} "$ROOT_DIR/app/src/main/jniLibs/arm64-v8a/libprootloader.so" \;
+  find "$STAGE/proot-deb" -path '*/libexec/proot/loader32' -exec cp {} "$ROOT_DIR/app/src/main/jniLibs/arm64-v8a/libprootloader32.so" \;
+  find "$STAGE/talloc-deb" -type f -name 'libtalloc.so*' -exec cp {} "$ROOT_DIR/app/src/main/jniLibs/arm64-v8a/libtalloc.so" \;
+  find "$STAGE/shmem-deb" -type f -name 'libandroid-shmem.so*' -exec cp {} "$ROOT_DIR/app/src/main/jniLibs/arm64-v8a/libandroid-shmem.so" \;
+fi
 for required in libproot.so libprootloader.so libtalloc.so libandroid-shmem.so; do
   test -s "$ROOT_DIR/app/src/main/jniLibs/arm64-v8a/$required" \
     || { echo "missing Android loader library: $required" >&2; exit 1; }

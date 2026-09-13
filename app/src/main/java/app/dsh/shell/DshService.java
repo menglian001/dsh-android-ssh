@@ -395,6 +395,13 @@ public final class DshService extends Service {
         env.put("PROOT_LOADER", new File(nativeDir, "libprootloader.so").getAbsolutePath());
         env.put("PROOT_LOADER_32", new File(nativeDir, "libprootloader32.so").getAbsolutePath());
         env.put("PROOT_TMP_DIR", tmp.getAbsolutePath());
+        // Android 15's kernel does not offer PTRACE_EVENT_SECCOMP, so proot's
+        // seccomp-accelerated syscall path cannot be installed. proot says so
+        // itself ("kernel lacks PTRACE_EVENT_SECCOMP support ... set the env.
+        // variable PROOT_NO_SECCOMP to 1") and without this the traced child
+        // is killed with SIGKILL. Disabling the accelerator falls back to
+        // plain ptrace, which is slower but works.
+        env.put("PROOT_NO_SECCOMP", "1");
         // libtalloc and libandroid-shmem sit beside libproot.so; both are
         // linked by the launcher and the loader.
         // Point the linker at the staged copies first: that directory holds
