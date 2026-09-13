@@ -1,21 +1,126 @@
 <?xml version="1.0" encoding="utf-8"?>
+<!-- Two layers: the dsh Web UI fills the screen once ready, and a startup
+     card sits on top while the local server boots. The card hides itself the
+     moment the server answers. -->
 <FrameLayout xmlns:android="http://schemas.android.com/apk/res/android"
     android:layout_width="match_parent"
-    android:layout_height="match_parent">
+    android:layout_height="match_parent"
+    android:background="#FF101114">
 
     <WebView
         android:id="@+id/web"
         android:layout_width="match_parent"
         android:layout_height="match_parent" />
 
-    <TextView
-        android:id="@+id/status"
-        android:layout_width="wrap_content"
-        android:layout_height="wrap_content"
-        android:layout_gravity="center"
+    <!-- Startup / failure card. -->
+    <LinearLayout
+        android:id="@+id/startup"
+        android:layout_width="match_parent"
+        android:layout_height="match_parent"
+        android:orientation="vertical"
+        android:gravity="center"
         android:padding="24dp"
-        android:textSize="16sp"
-        android:textColor="?android:attr/textColorPrimary"
-        android:background="?android:attr/colorBackground"
-        android:visibility="gone" />
+        android:background="#FF101114">
+
+        <ImageView
+            android:layout_width="72dp"
+            android:layout_height="72dp"
+            android:layout_marginBottom="20dp"
+            android:contentDescription="@string/app_name"
+            android:src="@drawable/icon_foreground" />
+
+        <TextView
+            android:id="@+id/title"
+            android:layout_width="wrap_content"
+            android:layout_height="wrap_content"
+            android:text="@string/startup_title"
+            android:textColor="#FFF2F3F5"
+            android:textSize="20sp"
+            android:textStyle="bold" />
+
+        <TextView
+            android:id="@+id/progress"
+            android:layout_width="match_parent"
+            android:layout_height="wrap_content"
+            android:layout_marginTop="14dp"
+            android:gravity="center"
+            android:lineSpacingExtra="4dp"
+            android:textColor="#FFB9BDC6"
+            android:textSize="14sp" />
+
+        <ProgressBar
+            android:id="@+id/spinner"
+            style="?android:attr/progressBarStyleHorizontal"
+            android:layout_width="220dp"
+            android:layout_height="4dp"
+            android:layout_marginTop="20dp"
+            android:indeterminate="true" />
+
+        <TextView
+            android:id="@+id/hint"
+            android:layout_width="match_parent"
+            android:layout_height="wrap_content"
+            android:layout_marginTop="18dp"
+            android:gravity="center"
+            android:text="@string/startup_hint"
+            android:textColor="#FF6E7480"
+            android:textSize="12sp" />
+
+        <!-- Action row: shown on failure, hidden while booting. -->
+        <LinearLayout
+            android:id="@+id/actions"
+            android:layout_width="wrap_content"
+            android:layout_height="wrap_content"
+            android:layout_marginTop="22dp"
+            android:orientation="horizontal"
+            android:visibility="gone">
+
+            <Button
+                android:id="@+id/restart"
+                android:layout_width="wrap_content"
+                android:layout_height="wrap_content"
+                android:text="@string/action_restart" />
+
+            <Button
+                android:id="@+id/copyLog"
+                android:layout_width="wrap_content"
+                android:layout_height="wrap_content"
+                android:layout_marginStart="12dp"
+                android:text="@string/action_copy_log" />
+        </LinearLayout>
+
+        <!-- Log toggle: always reachable so a hang is diagnosable. -->
+        <TextView
+            android:id="@+id/logToggle"
+            android:layout_width="wrap_content"
+            android:layout_height="wrap_content"
+            android:layout_marginTop="20dp"
+            android:padding="8dp"
+            android:text="@string/action_show_log"
+            android:textColor="#FF4D6BFE"
+            android:textSize="13sp" />
+
+        <!-- Log panel: hidden by default, expands on tap. -->
+        <ScrollView
+            android:id="@+id/logPanel"
+            android:layout_width="match_parent"
+            android:layout_height="0dp"
+            android:layout_weight="1"
+            android:layout_marginTop="10dp"
+            android:background="#FF191A1E"
+            android:padding="12dp"
+            android:visibility="gone">
+
+            <TextView
+                android:id="@+id/logText"
+                android:layout_width="match_parent"
+                android:layout_height="wrap_content"
+                android:fontFamily="monospace"
+                android:lineSpacingExtra="2dp"
+                android:text="@string/log_empty"
+                android:textColor="#FFB9BDC6"
+                android:textIsSelectable="true"
+                android:textSize="11sp" />
+        </ScrollView>
+    </LinearLayout>
 </FrameLayout>

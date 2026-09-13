@@ -16,3 +16,7 @@ signing/*.keystore
 # OS noise
 .DS_Store
 *.log
+
+# Release binaries (published as GitHub Release assets)
+*.apk
+*.apk.sha256

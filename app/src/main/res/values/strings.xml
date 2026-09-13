@@ -2,14 +2,29 @@
 <resources>
     <string name="app_name">dsh</string>
 
-    <!-- Boot status lines shown before the UI is live. -->
-    <string name="status_starting">正在准备 dsh 运行环境…首次启动需要一些时间</string>
-    <string name="status_down">dsh 已停止运行。请从通知栏重新启动或重开应用。</string>
+    <!-- Startup screen: progress lines. dsh is a local Node server, so the UI
+         can only appear once it has started listening on loopback. -->
+    <string name="startup_title">正在启动 dsh</string>
+    <string name="startup_hint">首次启动需解压运行环境，约 1-2 分钟；之后仅需数秒</string>
+    <string name="progress_prepare">正在准备运行环境…</string>
+    <string name="progress_extract">已解压 %1$d 个文件…</string>
+    <string name="progress_extract_percent">已解压 %2$d 个文件（%1$d%%）</string>
+    <string name="progress_starting">运行环境就绪，正在启动 dsh…</string>
+    <string name="progress_waiting">正在等待 dsh 服务响应…（%1$d 秒）</string>
+    <string name="status_down">dsh 已停止运行</string>
+    <string name="failure_exit">dsh 进程已退出（退出码 %1$d）。以下是最后输出：</string>
+    <string name="failure_timeout">dsh 启动超时（已等待 %1$d 秒）。请点开日志查看原因。</string>
+    <string name="action_restart">重新启动</string>
+    <string name="action_copy_log">复制日志</string>
+    <string name="action_show_log">显示日志</string>
+    <string name="action_hide_log">隐藏日志</string>
+    <string name="log_empty">（暂无日志）</string>
+    <string name="log_copied">日志已复制</string>
 
     <!-- Foreground service notification. -->
     <string name="notification_channel">dsh 运行状态</string>
     <string name="notification_channel_desc">保持 dsh 在后台与息屏时运行</string>
     <string name="notification_starting">正在启动…</string>
     <string name="notification_running">运行中</string>
-    <string name="notification_failed">启动失败，请查看日志</string>
+    <string name="notification_failed">启动失败</string>
 </resources>

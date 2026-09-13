@@ -35,6 +35,16 @@ final class RuntimeInstaller {
     private RuntimeInstaller() {
     }
 
+    /** Reports extraction progress so the UI can show something truthful. */
+    interface Progress {
+        /**
+         * @param consumed - compressed bytes read so far, or 0 when unknown.
+         * @param total - compressed asset size, or 0 when unknown.
+         * @param entries - archive entries finished so far.
+         */
+        void onExtract(long consumed, long total, long entries);
+    }
+
     /**
      * Return the extracted runtime root, extracting it on first call.
      *
@@ -44,8 +54,11 @@ final class RuntimeInstaller {
      *     rootfs/   (Ubuntu + Node + dsh, read-only after extraction)
      *     data/     (dsh's world: history, plugins, SSH trust store)
      * </pre>
+     *
+     * @param context - App context.
+     * @param progress - extraction progress sink; may be null.
      */
-    static File ensureRuntime(Context context) throws IOException {
+    static File ensureRuntime(Context context, Progress progress) throws IOException {
         File root = new File(context.getFilesDir(), "dsh-runtime");
         File rootfs = new File(root, "rootfs");
         File marker = new File(root, MARKER);
@@ -56,9 +69,11 @@ final class RuntimeInstaller {
 
         long started = System.currentTimeMillis();
         Log.i(TAG, "extracting runtime bundle");
+        long total = assetSize(context, ASSET);
         try (InputStream raw = context.getAssets().open(ASSET);
-             InputStream gunzip = new GZIPInputStream(raw, 1 << 16)) {
-            untar(gunzip, root);
+             CountingInputStream counting = new CountingInputStream(raw);
+             InputStream gunzip = new GZIPInputStream(counting, 1 << 16)) {
+            untar(gunzip, root, progress, counting, total);
         }
         touch(marker);
         Log.i(TAG, "runtime extracted in "
@@ -66,12 +81,35 @@ final class RuntimeInstaller {
         return root;
     }
 
+    /** The stored size of one asset, or 0 when it cannot be read. */
+    private static long assetSize(Context context, String name) {
+        try {
+            return context.getAssets().openFd(name).getLength();
+        } catch (IOException unknown) {
+            return 0;
+        }
+    }
+
+    /**
+     * Whether the runtime has already been extracted.
+     *
+     * The UI shows a longer, honest "first run" message only when the bundle
+     * still has to be unpacked; every later launch is a plain server start.
+     */
+    static boolean isPrepared(Context context) {
+        File root = new File(context.getFilesDir(), "dsh-runtime");
+        return new File(root, MARKER).isFile() && new File(root, "rootfs").isDirectory();
+    }
+
     /** Minimal tar reader: dirs, files, symlinks, hardlinks, and GNU
      * LongLink ('L'/'K') entries — node_modules paths exceed 100 chars. */
-    private static void untar(InputStream in, File root) throws IOException {
+    private static void untar(
+            InputStream in, File root, Progress progress,
+            CountingInputStream counting, long total) throws IOException {
         byte[] header = new byte[512];
         String pendingLongName = null;
         String pendingLongLink = null;
+        long entries = 0;
         // Absolute entry names are anchored at the extraction root.
         while (readFully(in, header) == 512) {
             String name = cstring(header, 0, 100);
@@ -108,6 +146,14 @@ final class RuntimeInstaller {
                 // staging tar; skip defensively if one ever appears.
                 skipExactly(in, (size + 511) & ~511L);
                 continue;
+            }
+
+            // Count only real entries: LongLink/PAX metadata above is skipped
+            // before reaching here, so the number matches what a user sees in
+            // a file manager rather than the archive's internal bookkeeping.
+            entries++;
+            if (progress != null && entries % 200 == 0) {
+                progress.onExtract(counting.consumed(), total, entries);
             }
 
             File target = safeTarget(root, entryName);
@@ -154,6 +200,55 @@ final class RuntimeInstaller {
             long padded = (size + 511) & ~511L;
             long remainder = padded - size;
             skipExactly(in, remainder);
+        }
+        if (progress != null) {
+            progress.onExtract(counting.consumed(), total, entries);
+        }
+    }
+
+    /**
+     * Counts the bytes pulled through the decompressor.
+     *
+     * The gzip stream reads ahead of the tar parser, so the count is a
+     * truthful "how far through the asset are we" figure without needing the
+     * asset length to be exact.
+     */
+    private static final class CountingInputStream extends java.io.FilterInputStream {
+        private long consumed;
+
+        CountingInputStream(InputStream in) {
+            super(in);
+        }
+
+        long consumed() {
+            return consumed;
+        }
+
+        @Override
+        public int read() throws IOException {
+            int value = super.read();
+            if (value >= 0) {
+                consumed++;
+            }
+            return value;
+        }
+
+        @Override
+        public int read(byte[] buffer, int offset, int length) throws IOException {
+            int read = super.read(buffer, offset, length);
+            if (read > 0) {
+                consumed += read;
+            }
+            return read;
+        }
+
+        @Override
+        public long skip(long count) throws IOException {
+            long skipped = super.skip(count);
+            if (skipped > 0) {
+                consumed += skipped;
+            }
+            return skipped;
         }
     }
 
