@@ -56,6 +56,15 @@ final class BootState {
     private volatile String status = "";
     /** Failure detail, when {@link #phase} is FAILED. */
     private volatile String detail = "";
+    /**
+     * The authenticated URL dsh printed once it was ready.
+     *
+     * dsh's Web server requires a launch token: a bare "/" request is answered
+     * with 401. The token is random per process and only appears in the
+     * "dsh web: http://127.0.0.1:PORT/?token=..." line, so the UI must load
+     * that exact URL rather than a hardcoded address.
+     */
+    private volatile String webUrl = "";
     /** Log lines, oldest first. */
     private final Deque<String> lines = new ArrayDeque<>();
     /** UI listeners, notified after every change. */
@@ -89,6 +98,17 @@ final class BootState {
     /** The failure detail, or an empty string. */
     String detail() {
         return detail;
+    }
+
+    /** The authenticated URL dsh printed, or an empty string before then. */
+    String webUrl() {
+        return webUrl;
+    }
+
+    /** Record the authenticated URL parsed from dsh's output. */
+    void webUrl(String url) {
+        this.webUrl = url;
+        notifyListeners();
     }
 
     /** A snapshot of the log lines. */
@@ -158,6 +178,7 @@ final class BootState {
         phase = Phase.IDLE;
         status = "";
         detail = "";
+        webUrl = "";
         notifyListeners();
     }
 

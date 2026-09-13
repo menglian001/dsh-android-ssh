@@ -36,9 +36,6 @@ import java.util.List;
  */
 public final class MainActivity extends Activity {
 
-    /** Where the local dsh Web server listens (fixed by the boot profile). */
-    private static final String DSH_URL = "http://127.0.0.1:3080/";
-
     /** The renderer. */
     private WebView web;
 
@@ -173,8 +170,14 @@ public final class MainActivity extends Activity {
             case READY:
                 startup.setVisibility(View.GONE);
                 if (!urlLoaded) {
+                    // Load the URL dsh printed: it carries the per-process
+                    // launch token, and a bare "/" is answered with 401.
+                    String url = state.webUrl();
+                    if (url.isEmpty()) {
+                        return;
+                    }
                     urlLoaded = true;
-                    web.loadUrl(DSH_URL);
+                    web.loadUrl(url);
                 }
                 return;
             case FAILED:

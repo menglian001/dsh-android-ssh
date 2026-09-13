@@ -55,6 +55,12 @@ public final class DshService extends Service {
     private static final int NOTIFICATION_ID = 1;
     private static final String TAG = "DshService";
 
+    /** The prefix of dsh's readiness line carrying the authenticated URL. */
+    private static final String URL_MARKER = "dsh web: ";
+
+    /** The query parameter that carries the launch token. */
+    private static final String TOKEN_MARKER = "token=";
+
     /**
      * How long to wait for the loopback port after starting the process.
      *
@@ -215,9 +221,34 @@ public final class DshService extends Service {
             String line;
             while ((line = reader.readLine()) != null) {
                 state.log(line);
+                captureWebUrl(state, line);
             }
         } catch (IOException ignored) {
             // The process ended and the stream closed; nothing to drain.
+        }
+    }
+
+    /**
+     * Pick the authenticated URL out of dsh's output.
+     *
+     * dsh prints exactly one readiness line, e.g.
+     * <pre>dsh web: http://127.0.0.1:3080/?token=AbC_-123</pre>
+     * Its Web server answers a bare "/" with 401, so this token-bearing URL is
+     * the only address the WebView may load. The line can also carry a
+     * " (LAN: ...)" suffix, which is trimmed away.
+     */
+    private void captureWebUrl(BootState state, String line) {
+        int marker = line.indexOf(URL_MARKER);
+        if (marker < 0) {
+            return;
+        }
+        String url = line.substring(marker + URL_MARKER.length()).trim();
+        int space = url.indexOf(' ');
+        if (space > 0) {
+            url = url.substring(0, space);
+        }
+        if (url.startsWith("http://") && url.contains(TOKEN_MARKER)) {
+            state.webUrl(url);
         }
     }
 
@@ -279,6 +310,10 @@ public final class DshService extends Service {
         // over by this very service, which would shadow a rootfs copy.
         argv.add("--patch");
         argv.add("/opt/dsh/ssh-only.yml");
+        // No desktop browser exists in this shell, and the handoff would spawn
+        // a child process for nothing. Passed after --patch because `web`
+        // stops owning flags at the first token it does not know.
+        argv.add("--no-open");
 
         BootState.get().log("exec: " + String.join(" ", argv));
         ProcessBuilder builder = new ProcessBuilder(argv).redirectErrorStream(true);
@@ -301,7 +336,14 @@ public final class DshService extends Service {
         return builder.start();
     }
 
-    /** Poll loopback until the server answers or the wait budget runs out. */
+    /**
+     * Wait until dsh prints its authenticated URL, or the budget runs out.
+     *
+     * The printed URL is a stronger readiness signal than an open port: it is
+     * emitted only after the whole loader tree has settled, and it carries the
+     * token the WebView needs. A TCP connect alone can succeed while the app
+     * is still mounting, and would leave the UI with no token.
+     */
     private boolean awaitServer() {
         BootState state = BootState.get();
         long started = System.currentTimeMillis();
@@ -311,6 +353,9 @@ public final class DshService extends Service {
             Process process = dsh.get();
             if (process != null && !process.isAlive()) {
                 return false;
+            }
+            if (!state.webUrl().isEmpty()) {
+                return true;
             }
             // One visible tick every 2 seconds, so the user can tell waiting
             // from hung even when dsh prints nothing.
@@ -326,17 +371,8 @@ public final class DshService extends Service {
                 Thread.currentThread().interrupt();
                 return false;
             }
-            try {
-                // A connection refused means not yet up; any answer is up.
-                java.net.Socket socket = new java.net.Socket();
-                socket.connect(new java.net.InetSocketAddress("127.0.0.1", 3080), 200);
-                socket.close();
-                return true;
-            } catch (IOException notYet) {
-                // Retry.
-            }
         }
-        return false;
+        return !state.webUrl().isEmpty();
     }
 
     /** Stop the live dsh process, if any. */
