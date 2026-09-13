@@ -54,6 +54,9 @@ public final class MainActivity extends Activity {
     /** Unsubscribe handle for the state listener. */
     private Runnable unsubscribe;
 
+    /** True between onCreate and onDestroy; guards late state callbacks. */
+    private boolean alive;
+
     @Override
     protected void onCreate(Bundle savedInstanceState) {
         super.onCreate(savedInstanceState);
@@ -104,6 +107,7 @@ public final class MainActivity extends Activity {
         requestNotificationPermission();
 
         // Render the current state immediately, then follow every change.
+        alive = true;
         unsubscribe = BootState.get().subscribe(this::render);
         render();
 
@@ -114,8 +118,24 @@ public final class MainActivity extends Activity {
 
     @Override
     protected void onDestroy() {
+        // Stop first: a state change arriving after this Activity is gone must
+        // not touch its views.
+        alive = false;
         if (unsubscribe != null) {
             unsubscribe.run();
+            unsubscribe = null;
+        }
+        // Tear the WebView down explicitly. Leaving it attached to a dead
+        // Activity leaks the renderer and is a common source of a crash on the
+        // next launch after the app was swiped away.
+        if (web != null) {
+            web.setWebViewClient(new WebViewClient());
+            web.stopLoading();
+            web.loadUrl("about:blank");
+            web.clearHistory();
+            web.removeAllViews();
+            web.destroy();
+            web = null;
         }
         super.onDestroy();
     }
@@ -165,6 +185,10 @@ public final class MainActivity extends Activity {
     }
     /** Paint the whole screen from the current {@link BootState}. */
     private void render() {
+        if (!alive) {
+            // A queued notification outlived this Activity; drop it.
+            return;
+        }
         BootState state = BootState.get();
         switch (state.phase()) {
             case READY:

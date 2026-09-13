@@ -50,6 +50,13 @@ final class BootState {
     /** The process-wide instance. */
     private static final BootState INSTANCE = new BootState();
 
+    /**
+     * The main thread's queue, captured when the app first touches this state.
+     *
+     * Null until then, which lets the holder work in a plain JVM too.
+     */
+    private volatile android.os.Handler mainHandler;
+
     /** Current phase. */
     private volatile Phase phase = Phase.IDLE;
     /** One-line progress text for the current phase. */
@@ -133,6 +140,15 @@ final class BootState {
 
     /** Subscribe for change notifications; returns the unsubscribe handle. */
     synchronized Runnable subscribe(Runnable listener) {
+        // Capture the main thread's queue the first time anyone subscribes:
+        // subscribing is always done from the UI, so this is the moment the
+        // holder learns where UI callbacks must land.
+        if (mainHandler == null) {
+            android.os.Looper looper = android.os.Looper.getMainLooper();
+            if (looper != null) {
+                mainHandler = new android.os.Handler(looper);
+            }
+        }
         listeners.add(listener);
         return () -> {
             synchronized (BootState.this) {
@@ -182,14 +198,35 @@ final class BootState {
         notifyListeners();
     }
 
+    /**
+     * Notify every listener on the main thread.
+     *
+     * Writers are background threads (the boot lane and the dsh output pump),
+     * while listeners are UI code that must only ever run on the main thread —
+     * touching a view from another thread throws
+     * CalledFromWrongThreadException and kills the app. Posting through the
+     * main looper is what keeps the two apart.
+     */
     private void notifyListeners() {
         List<Runnable> snapshot;
         synchronized (this) {
             snapshot = new ArrayList<>(listeners);
         }
-        for (Runnable listener : snapshot) {
-            listener.run();
+        if (snapshot.isEmpty()) {
+            return;
         }
+        Runnable dispatch = () -> {
+            for (Runnable listener : snapshot) {
+                listener.run();
+            }
+        };
+        if (mainHandler == null) {
+            // No looper captured yet (unit tests, or a very early call):
+            // run inline rather than dropping the notification.
+            dispatch.run();
+            return;
+        }
+        mainHandler.post(dispatch);
     }
 
     /** Append one line to the rolling log file, trimming it when it grows. */

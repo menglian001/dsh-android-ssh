@@ -94,12 +94,16 @@ public final class DshService extends Service {
 
     @Override
     public int onStartCommand(Intent intent, int flags, int startId) {
+        // Always satisfy the foreground obligation first. A start delivered
+        // through startForegroundService must call startForeground within a few
+        // seconds or the system kills the process, and that rule applies to the
+        // restart action too.
+        Notification notification = buildNotification(getString(R.string.notification_starting));
+        startForeground(NOTIFICATION_ID, notification);
         if (intent != null && ACTION_RESTART.equals(intent.getAction())) {
             restartBoot();
             return START_STICKY;
         }
-        Notification notification = buildNotification(getString(R.string.notification_starting));
-        startForeground(NOTIFICATION_ID, notification);
         // A repeated start (the Activity is recreated, or the system redelivers
         // START_STICKY) must not spawn a second dsh process.
         if (booting.compareAndSet(false, true)) {
