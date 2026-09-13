@@ -60,6 +60,8 @@ public final class MainActivity extends Activity {
     @Override
     protected void onCreate(Bundle savedInstanceState) {
         super.onCreate(savedInstanceState);
+        // Record any crash so the next launch can show what happened.
+        CrashRecorder.install(this);
 
         // Full-screen immersive shell: no title bar, keep the screen on while
         // the user is working, and let the layout reach the display cutouts.
@@ -105,6 +107,17 @@ public final class MainActivity extends Activity {
         // The foreground service posts a status notification; Android 13+ hides
         // it unless the user grants POST_NOTIFICATIONS at runtime.
         requestNotificationPermission();
+
+        // Surface a crash from the previous run before anything else, so a
+        // launch that used to die silently now explains itself.
+        String previousCrash = CrashRecorder.consume(this);
+        if (!previousCrash.isEmpty()) {
+            BootState.get().log("=== previous launch crashed ===");
+            for (String line : previousCrash.split("\n", -1)) {
+                BootState.get().log(line);
+            }
+            BootState.get().log("=== end of crash report ===");
+        }
 
         // Render the current state immediately, then follow every change.
         alive = true;
@@ -189,11 +202,25 @@ public final class MainActivity extends Activity {
             // A queued notification outlived this Activity; drop it.
             return;
         }
+        try {
+            renderState();
+        } catch (RuntimeException error) {
+            // A rendering fault must not take the whole app down: record it
+            // where the log panel can show it and carry on.
+            BootState.get().log("render failed: " + error);
+            for (StackTraceElement frame : error.getStackTrace()) {
+                BootState.get().log("  at " + frame);
+            }
+        }
+    }
+
+    /** The actual state-to-view mapping, guarded by {@link #render()}. */
+    private void renderState() {
         BootState state = BootState.get();
         switch (state.phase()) {
             case READY:
                 startup.setVisibility(View.GONE);
-                if (!urlLoaded) {
+                if (!urlLoaded && web != null) {
                     // Load the URL dsh printed: it carries the per-process
                     // launch token, and a bare "/" is answered with 401.
                     String url = state.webUrl();
