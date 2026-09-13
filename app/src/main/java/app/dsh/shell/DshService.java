@@ -351,10 +351,24 @@ public final class DshService extends Service {
         argv.add("--rootfs=" + rootfs.getAbsolutePath());
         argv.add("--cwd=/data");
         // The kernel-facing mounts a Node process needs inside the container.
-        argv.add("-b");
-        argv.add("/dev");
-        argv.add("-b");
-        argv.add("/proc");
+        // /dev/fd matters: Node resolves its own descriptors through it, and
+        // /sys, /system and /apex are the Android-specific trees a bionic
+        // binary expects to find. Only paths that exist are bound.
+        String[][] binds = {
+                {"/dev"},
+                {"/proc"},
+                {"/sys"},
+                {"/system"},
+                {"/apex"},
+                {"/proc/self/fd", "/dev/fd"},
+        };
+        for (String[] bind : binds) {
+            if (!new File(bind[0]).exists()) {
+                continue;
+            }
+            argv.add("-b");
+            argv.add(bind.length == 1 ? bind[0] : bind[0] + ":" + bind[1]);
+        }
         // dsh's whole world (history, plugins, SSH trust store) lives in
         // App-private storage; uninstalling the app removes it all. The
         // rootfs ships /data as an empty mountpoint for exactly this bind.
