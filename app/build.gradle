@@ -1,0 +1,60 @@
+plugins {
+    id 'com.android.application'
+}
+
+android {
+    namespace 'app.dsh.shell'
+    compileSdk 34
+
+    defaultConfig {
+        applicationId "app.dsh.shell"
+        // The product runs on one personal device (OPPO OPD2407, Android 15);
+        // minSdk 26 covers Android 8+ if the key ever moves phones.
+        minSdk 26
+        targetSdk 34
+        versionCode 1
+        versionName "0.1.0"
+        // Personal single-ABI build: arm64-v8a only, by decision.
+        ndk {
+            abiFilters 'arm64-v8a'
+        }
+    }
+
+    signingConfigs {
+        // Local debug-style key retained across builds so updates install
+        // over the existing app; private use, never published.
+        personal {
+            storeFile rootProject.file('signing/personal.keystore')
+            storePassword 'dsh-personal'
+            keyAlias 'dsh'
+            keyPassword 'dsh-personal'
+        }
+    }
+
+    buildTypes {
+        release {
+            minifyEnabled false
+            signingConfig signingConfigs.personal
+        }
+    }
+
+    compileOptions {
+        sourceCompatibility JavaVersion.VERSION_17
+        targetCompatibility JavaVersion.VERSION_17
+    }
+
+    // The runtime bundle ships already gzipped under a neutral '.bin' name.
+    // AAPT2 gunzips a '.gz' asset during merge and inflates 127 MB into a
+    // 500 MB '.tar', which then OOMs compressReleaseAssets. A '.bin'
+    // extension plus noCompress keeps the bundle verbatim.
+    androidResources {
+        noCompress 'bin'
+    }
+}
+
+dependencies {
+    // No third-party UI or runtime libraries: the shell is one WebView, one
+    // foreground service and a tar extractor on the platform APIs alone.
+    // androidx.appcompat/webkit are deliberately absent: they drag in
+    // mismatched kotlin-stdlib copies for no capability this shell uses.
+}

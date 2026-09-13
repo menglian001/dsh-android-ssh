@@ -1,0 +1,18 @@
+# Build outputs
+build/
+app/build/
+.gradle/
+.stage-runtime/
+
+# Generated runtime bundle (assembled by scripts/stage-runtime.sh)
+app/src/main/assets/dsh-runtime.bin
+app/src/main/jniLibs/
+
+# Local machine config and private signing material
+local.properties
+signing/*.keystore
+*.jks
+
+# OS noise
+.DS_Store
+*.log

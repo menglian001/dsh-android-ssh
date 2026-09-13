@@ -1,0 +1,58 @@
+# The SSH-only execution bundle: applied over the dsh-base bundle inside a
+# `dsh --profile`. Rows are addressed by id over the base layer, with the
+# same composition the E2B family uses to swap execution worlds: the local
+# providers are disabled and the remote providers are inserted in their
+# place, while dsh's own permission chain (sandbox-policy, approval,
+# permission presets) stays exactly as the official base wrote it and keeps
+# governing every remote action. No secret ever lives here: the server
+# address, credentials and reconnect policy are the user's ssh-remote
+# settings section; this layer only wires packages.
+
+# The local spawn provider: replaced by the SSH world.
+- id: subprocess
+  disabled: true
+
+# The local sandboxed filesystem: replaced by SFTP over the same world.
+- id: fs-sandbox
+  disabled: true
+
+# The local shell executors wrap argv with a local sandbox wrapper before
+# spawning through ctx.subprocess; that wrapper's path exists only on the
+# phone, never on the server, so both platform executors are disabled and
+# the plain executor takes over — its argv rides ctx.subprocess to the
+# remote bash, with approval still asked per dsh's permission chain.
+- id: bash-sandbox
+  disabled: true
+- id: pwsh-sandbox
+  disabled: true
+
+- insert:
+    # The shared SSH execution world. It deliberately starts disconnected;
+    # settings are entered through the original dsh settings card, then an
+    # app/profile restart rebuilds this service from that saved section.
+    - id: ssh-runtime
+      name: '@local/dsh-ssh-runtime'
+      config:
+        host: ''
+        username: ''
+        cwd: /root/dsh
+
+    # The command/PTY/terminal provider: remote execution only.
+    - id: subprocess-ssh
+      name: '@local/dsh-subprocess-ssh'
+
+    # The filesystem provider: SFTP over the shared SSH world, fenced by the
+    # same sandbox-policy mode and remote workspace root.
+    - id: fs-ssh
+      name: '@local/dsh-fs-ssh'
+
+    # The plain shell executor: spawns bash through ctx.subprocess (now the
+    # SSH provider), so commands run on the server under the approval chain.
+    - id: bash
+      name: '@deepseek-ai/dsh-bash-local'
+
+    # The integration: ssh-remote settings, credentials, host-key trust, the
+    # sshRemote control API and the execution gate. The package manifest's
+    # dsh.client face also mounts the settings card on the browser side.
+    - id: ssh-integration
+      name: '@local/dsh-ssh-integration'

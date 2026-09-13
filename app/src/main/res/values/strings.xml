@@ -1,0 +1,15 @@
+<?xml version="1.0" encoding="utf-8"?>
+<resources>
+    <string name="app_name">dsh</string>
+
+    <!-- Boot status lines shown before the UI is live. -->
+    <string name="status_starting">正在准备 dsh 运行环境…首次启动需要一些时间</string>
+    <string name="status_down">dsh 已停止运行。请从通知栏重新启动或重开应用。</string>
+
+    <!-- Foreground service notification. -->
+    <string name="notification_channel">dsh 运行状态</string>
+    <string name="notification_channel_desc">保持 dsh 在后台与息屏时运行</string>
+    <string name="notification_starting">正在启动…</string>
+    <string name="notification_running">运行中</string>
+    <string name="notification_failed">启动失败，请查看日志</string>
+</resources>

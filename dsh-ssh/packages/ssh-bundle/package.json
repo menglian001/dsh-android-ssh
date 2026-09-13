@@ -1,0 +1,16 @@
+{
+  "name": "@local/dsh-ssh-bundle",
+  "description": "SSH-only execution bundle for the DeepSeek Harness: swaps the subprocess and filesystem providers to the SSH implementations while keeping dsh's native approval chain, and mounts the ssh-integration plugin",
+  "version": "0.0.1",
+  "private": true,
+  "type": "module",
+  "exports": {
+    "./package.json": "./package.json"
+  },
+  "dsh": {
+    "bundle": {
+      "patch": "./cordis.patch.yml"
+    }
+  },
+  "license": "MIT"
+}
